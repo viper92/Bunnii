@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ASCII Video Player</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="player">
+    <header>
+      <h1>ASCII Video Player</h1>
+      <p class="tagline">Play back animations made entirely from text characters.</p>
+    </header>
+
+    <section class="display">
+      <pre id="frameDisplay" aria-live="polite"></pre>
+    </section>
+
+    <section class="controls" aria-label="Playback controls">
+      <div class="primary-controls">
+        <button id="playPauseBtn" type="button">Play</button>
+        <button id="stopBtn" type="button">Stop</button>
+        <button id="stepBtn" type="button">Step ▶</button>
+        <label class="fps-control">
+          <span>Speed</span>
+          <input id="speedSlider" type="range" min="2" max="20" step="1" value="8" />
+          <span id="speedValue">8 fps</span>
+        </label>
+      </div>
+
+      <label class="timeline" for="frameRange">
+        <span>Frame</span>
+        <input id="frameRange" type="range" min="0" max="0" value="0" />
+        <span id="frameCount">0 / 0</span>
+      </label>
+
+      <label class="file-loader" for="frameFile">
+        <span>Load custom frames:</span>
+        <input id="frameFile" type="file" accept=".txt,.asc,.ansi" />
+      </label>
+    </section>
+
+    <section class="help">
+      <h2>How it works</h2>
+      <p>
+        The player displays a series of ASCII art frames separated by a delimiter.
+        Use the controls above to play, pause, or step through the animation. You can
+        also load your own frame file—each frame should be separated by a line containing
+        three hyphens (<code>---</code>).
+      </p>
+      <p>
+        Need a starting point? Download the
+        <a href="sample-frames.txt" download>sample animation</a>
+        bundled with this project.
+      </p>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
