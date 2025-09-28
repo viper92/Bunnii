@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Live ASCII Video Player — GPU Accelerated (WebGL Truecolor)</title>
+  <style>
+    :root{
+      --bg:#0b0b0b; --fg:#eaeaea; --muted:#9aa0a6; --accent:#8ab4f8;
+      --card:#151515; --border:#262626; --danger:#e57373;
+      --stage-ar: 16/9;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";}
+    .wrap{display:grid;grid-template-rows:auto 1fr auto;min-height:100dvh;}
+    header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    header h1{font-size:18px;line-height:1.2;margin:0;font-weight:700;letter-spacing:.2px}
+    header .sub{font-size:12px;color:var(--muted)}
+    .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+    input[type="text"], input[type="number"], input[type="url"], .btn, select{
+      background:#101010;border:1px solid var(--border);color:var(--fg);
+      padding:8px 10px;border-radius:10px;outline:none;min-width:0;
+    }
+    input[type="range"]{width:160px}
+    .btn{cursor:pointer;user-select:none;transition:transform .05s ease, background .2s ease}
+    .btn:hover{background:#141414}
+    .btn:active{transform:translateY(1px)}
+    .btn.primary{background:var(--accent);color:#0b1220;border-color:#2b63d3}
+    .btn.danger{background:var(--danger);color:#190a0a;border-color:#7a2e2e}
+    .btn.ghost{background:transparent;border-color:var(--border)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+    .grow{flex:1 1 auto}
+    main{display:grid;grid-template-columns:360px 1fr;gap:16px;padding:16px;min-height:0}
+    .left{min-width:260px}
+    .right{display:grid;grid-template-rows:1fr auto;min-height:0}
+    .stage{contain: layout; position:relative;display:flex;align-items:center;justify-content:center;background:#000;border-radius:12px;border:1px solid var(--border);min-height:320px;overflow:auto;aspect-ratio:var(--stage-ar)}
+    canvas#ascii{display:block;width:100%;height:100%;}
+    .footer{padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;color:var(--muted);font-size:12px}
+    .kv{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center}
+    .muted{color:var(--muted)}
+    .small{font-size:12px}
+    .hint{font-size:12px;color:var(--muted);margin-top:6px}
+    .stack{display:grid;gap:10px}
+    .hidden{display:none !important}
+    .switch{display:flex;align-items:center;gap:8px}
+    .notice{background:#0f1a2b;border:1px dashed #2b63d3;color:#bcd3ff;padding:10px 12px;border-radius:12px;font-size:12px}
+    .code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+
+    .mobile-only{display:none}
+    .desktop-only{display:initial}
+    body.is-mobile .desktop-only{display:none}
+    body.is-mobile .mobile-only{display:initial}
+
+    body.is-mobile main{grid-template-columns:1fr; padding:10px; gap:10px}
+    body.is-mobile .left{order:2}
+    body.is-mobile .right{order:1}
+    body.is-mobile .stage{min-height:38dvh; border-radius:10px}
+    body.is-mobile input[type="range"]{width:100%}
+    body.is-mobile .kv{grid-template-columns:1fr 1fr}
+    .mobilebar{display:none}
+    body.is-mobile .mobilebar{
+      position:sticky;bottom:0;left:0;right:0;
+      display:flex;gap:8px;align-items:center;justify-content:space-between;
+      background:var(--card);border-top:1px solid var(--border);
+      padding:8px env(safe-area-inset-right) calc(8px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
+      z-index:10;
+    }
+    body.is-mobile .mobilebar .btn{flex:0 0 auto; padding:10px 12px; border-radius:12px}
+    body.is-mobile .mobilebar .btn.wide{flex:1 1 auto}
+    body.is-mobile .mobilebar input[type="range"]{width:100%}
+    body.is-mobile .footer{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+
+    header, main .left, .mobilebar { position: relative; z-index: 20; }
+    .stage, .stage canvas, #asciiPre { z-index: 0; pointer-events: none; }
+    #video { pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Live ASCII Video Player</h1>
+        <div class="sub">GPU‑accelerated WebGL renderer with truecolor, palette quantization & ordered dithering. Canvas &lt;pre&gt; remain as fallbacks.</div>
+      </div>
+      <div class="controls desktop-only">
+        <button class="btn primary" id="playBtn">Play</button>
+        <button class="btn ghost" id="pauseBtn">Pause</button>
+        <button class="btn danger" id="stopBtn">Stop</button>
+        <button class="btn ghost" id="muteBtn">Mute</button>
+        <button class="btn ghost" id="fsBtn">Full-screen</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="right">
+        <div class="stage" id="stage">
+          <canvas id="ascii"></canvas>
+          <pre id="asciiPre" class="hidden" style="margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;line-height:1.0;font-size:14px;color:#fff;white-space:pre;user-select:text;"></pre>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <video id="video" class="hidden" crossorigin="anonymous" playsinline webkit-playsinline></video>
+          <div class="small muted">The native &lt;video&gt; element is hidden by default; enable “Show native video controls” to reveal it.</div>
+        </div>
+      </section>
+
+      <section class="left stack">
+        <div class="card">
+          <div class="row">
+            <div class="grow">
+              <label for="fileInput">Load video file</label>
+              <input id="fileInput" type="file" accept="video/*"/>
+              <div class="hint">Best: a local <span class="code">.mp4</span> (no CORS issues).</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div class="grow">
+              <label for="urlInput">Or paste a direct video URL</label>
+              <input id="urlInput" type="url" placeholder="https://example.com/video.mp4 (must allow CORS)"/>
+            </div>
+            <button class="btn" id="loadUrlBtn">Load URL</button>
+          </div>
+        </div>
+
+        <div class="card desktop-only">
+          <div class="row">
+            <div>
+              <label for="scale">Sampling (px / char)</label>
+              <input id="scale" type="range" min="4" max="28" step="1" value="10"/>
+              <div class="small muted" id="scaleLabel">10 px/char</div>
+            </div>
+            <div>
+              <label for="fontSize">Font size (px)</label>
+              <input id="fontSize" type="number" min="6" max="28" value="14"/>
+            </div>
+            <div>
+              <label for="fpsCap">FPS cap</label>
+              <input id="fpsCap" type="number" min="5" max="60" value="30"/>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div class="grow">
+              <label for="charset">Custom charset (dark → light)</label>
+              <input id="charset" type="text" value="@$B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/|()1{}[]?-_+~<>i!lI;:,\&quot;^`'. " />
+              <div class="hint">Tip: keep a trailing space for the lightest shade.</div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div class="grow">
+              <label for="charsetPreset">Preset</label>
+              <select id="charsetPreset">
+                <option value="dense" selected>Dense (classic art)</option>
+                <option value="classic">Classic (@%#*+=-:. )</option>
+                <option value="blocks">Blocks (█▓▒░…)</option>
+                <option value="numbers">Numbers & punctuation</option>
+                <option value="custom">Use Custom</option>
+              </select>
+            </div>
+            <div class="switch">
+              <input id="invert" type="checkbox"/>
+              <label for="invert">Invert</label>
+            </div>
+            <div class="switch">
+              <input id="hqLuma" type="checkbox"/>
+              <label for="hqLuma">HQ luminance</label>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div class="grow">
+              <label for="colorMode">Color mode</label>
+              <select id="colorMode">
+                <option value="off">Off (monochrome)</option>
+                <option value="fg16" selected>DOS FG 16 (black BG)</option>
+                <option value="fg16bg8">DOS FG 16 + BG 8 (CPU only)</option>
+                <option value="gray4">Grays (Black/DkGray/LtGray/White)</option>
+                <option value="fullcolor">Truecolor 24-bit</option>
+                <option value="fg216">FG 216 (Web‑safe)</option>
+                <option value="xterm256">FG 256 (XTerm approx)</option>
+              </select>
+            </div>
+            <div class="grow">
+              <label for="paletteMode">Palette</label>
+              <select id="paletteMode">
+                <option value="dos" selected>Default DOS RGBI</option>
+                <option value="win16">Windows 16</option>
+                <option value="ansi16">ANSI 16</option>
+                <option value="vga16">VGA 16 (Win9x)</option>
+                <option value="cga16">CGA 16</option>
+                <option value="gray16">Gray 16</option>
+                <option value="xterm16">XTerm 16</option>
+                <option value="vga-auto">VGA Auto (learn 16)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div class="grow">
+              <label for="dither">Ordered dither</label>
+              <select id="dither">
+                <option value="off" selected>Off</option>
+                <option value="bayer2">Bayer 2×2</option>
+                <option value="bayer4">Bayer 4×4</option>
+              </select>
+            </div>
+            <div class="switch">
+              <input id="halfBlock" type="checkbox"/>
+              <label for="halfBlock">Half-block mode (▀/▄)</label>
+            </div>
+            <div class="switch">
+              <input id="blink" type="checkbox"/>
+              <label for="blink">Simulate blink</label>
+            </div>
+            <div class="switch">
+              <input id="useWebGL" type="checkbox"/>
+              <label for="useWebGL">Use WebGL renderer (faster)</label>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div class="switch">
+              <input id="showNative" type="checkbox"/>
+              <label for="showNative">Show native video controls</label>
+            </div>
+            <div class="switch">
+              <input id="usePre" type="checkbox"/>
+              <label for="usePre">Render as DOM text (&lt;pre&gt;)</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mobile settings collapsible -->
+        <details class="settings mobile-only">
+          <summary>Settings</summary>
+          <div class="content">
+            <div class="card" style="margin-top:6px">
+              <div class="row">
+                <div class="grow">
+                  <label for="scale_m">Sampling (px / char)</label>
+                  <input id="scale_m" type="range" min="4" max="28" step="1" value="12"/>
+                  <div class="small muted" id="scaleLabel_m">12 px/char</div>
+                </div>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <div style="min-width:120px">
+                  <label for="fontSize_m">Font size (px)</label>
+                  <input id="fontSize_m" type="number" min="6" max="24" value="12"/>
+                </div>
+                <div style="min-width:120px">
+                  <label for="fpsCap_m">FPS cap</label>
+                  <input id="fpsCap_m" type="number" min="5" max="60" value="30"/>
+                </div>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <div class="grow">
+                  <label for="charset_m">Custom charset (dark → light)</label>
+                  <input id="charset_m" type="text" value="@$B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/|()1{}[]?-_+~<>i!lI;:,\&quot;^`'. " />
+                </div>
+                <div class="switch">
+                  <input id="invert_m" type="checkbox"/>
+                  <label for="invert_m">Invert</label>
+                </div>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <div class="grow">
+                  <label for="charsetPreset_m">Preset</label>
+                  <select id="charsetPreset_m">
+                    <option value="dense" selected>Dense (classic art)</option>
+                    <option value="classic">Classic (@%#*+=-:. )</option>
+                    <option value="blocks">Blocks (█▓▒░…)</option>
+                    <option value="numbers">Numbers & punctuation</option>
+                    <option value="custom">Use Custom</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:10px">
+                <div class="grow">
+                  <label for="colorMode_m">Color mode</label>
+                  <select id="colorMode_m">
+                    <option value="off">Off (monochrome)</option>
+                    <option value="fg16" selected>DOS FG 16 (black BG)</option>
+                    <option value="fg16bg8">DOS FG 16 + BG 8 (CPU only)</option>
+                    <option value="gray4">Grays (Black/DkGray/LtGray/White)</option>
+                    <option value="fullcolor">Truecolor 24-bit</option>
+                    <option value="fg216">FG 216 (Web‑safe)</option>
+                    <option value="xterm256">FG 256 (XTerm approx)</option>
+                  </select>
+                </div>
+                <div class="grow">
+                  <label for="paletteMode_m">Palette</label>
+                  <select id="paletteMode_m">
+                    <option value="dos" selected>Default DOS RGBI</option>
+                    <option value="win16">Windows 16</option>
+                    <option value="ansi16">ANSI 16</option>
+                    <option value="vga16">VGA 16 (Win9x)</option>
+                    <option value="cga16">CGA 16</option>
+                    <option value="gray16">Gray 16</option>
+                    <option value="xterm16">XTerm 16</option>
+                    <option value="vga-auto">VGA Auto (learn 16)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:10px">
+                <div class="grow">
+                  <label for="dither_m">Ordered dither</label>
+                  <select id="dither_m">
+                    <option value="off" selected>Off</option>
+                    <option value="bayer2">Bayer 2×2</option>
+                    <option value="bayer4">Bayer 4×4</option>
+                  </select>
+                </div>
+                <div class="switch">
+                  <input id="halfBlock_m" type="checkbox"/>
+                  <label for="halfBlock_m">Half-block mode (▀/▄)</label>
+                </div>
+                <div class="switch">
+                  <input id="hqLuma_m" type="checkbox"/>
+                  <label for="hqLuma_m">HQ luminance (BT.709)</label>
+                </div>
+                <div class="switch">
+                  <input id="blink_m" type="checkbox"/>
+                  <label for="blink_m">Simulate blink</label>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:10px">
+                <div class="switch">
+                  <input id="showNative_m" type="checkbox"/>
+                  <label for="showNative_m">Show native video controls</label>
+                </div>
+                <div class="switch">
+                  <input id="usePre_m" type="checkbox"/>
+                  <label for="usePre_m">Render as DOM text (&lt;pre&gt;)</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="card">
+          <div class="kv small">
+            <div class="muted">Resolution</div><div id="resOut">—</div>
+            <div class="muted">Video</div><div id="infoOut">—</div>
+            <div class="muted">Renderer</div><div id="rendererOut">Canvas text</div>
+            <div class="muted">Timing</div><div id="timingOut">—</div>
+            <div class="muted">Watchdog</div><div id="watchdogOut">—</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Mobile action bar -->
+    <div class="mobilebar" id="mobileBar" role="toolbar" aria-label="Playback controls">
+      <button class="btn primary" id="mPlay">Play</button>
+      <button class="btn ghost" id="mPause">Pause</button>
+      <button class="btn danger" id="mStop">Stop</button>
+      <button class="btn ghost" id="mMute">Mute</button>
+      <button class="btn ghost" id="mFs" aria-label="Toggle Fullscreen">⤢</button>
+    </div>
+
+    <div class="footer">
+      <div>Within DOS text-mode limits: 16 FG colors, 8 or 16 BG (blink trade-off), programmable VGA palette.</div>
+      <div id="status" class="muted">Idle</div>
+    </div>
+  </div>
+
+  <!-- ===== Main App (Canvas & <pre> fallbacks remain) ===== -->
+  <script>
+  (() => {
+    function isMobileUA(){
+      const ua = navigator.userAgent || navigator.vendor || window.opera || "";
+      return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    }
+    if (isMobileUA()) document.body.classList.add('is-mobile');
+
+    function setStageAspectForOrientation(){
+      if (!document.body.classList.contains('is-mobile')) return;
+      const portrait = (screen.orientation && screen.orientation.type ? screen.orientation.type.includes('portrait') : window.innerHeight >= window.innerWidth);
+      document.documentElement.style.setProperty('--stage-ar', portrait ? '9/16' : '16/9');
+    }
+    setStageAspectForOrientation();
+    window.addEventListener('orientationchange', setStageAspectForOrientation);
+    window.addEventListener('resize', setStageAspectForOrientation);
+
+    const video = document.getElementById('video');
+    const asciiCanvas = document.getElementById('ascii');
+    const asciiCtx = asciiCanvas.getContext('2d');
+    asciiCtx.textBaseline = 'top';
+    const asciiPre = document.getElementById('asciiPre');
+    const stage = document.getElementById('stage');
+
+    const workCanvas = document.createElement('canvas');
+    const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Expose to window so the WebGL wrapper can see them.
+    window.workCanvas = workCanvas;
+
+    const playBtn = document.getElementById('playBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const muteBtn = document.getElementById('muteBtn');
+    const fsBtn = document.getElementById('fsBtn');
+
+    const mPlay = document.getElementById('mPlay');
+    const mPause = document.getElementById('mPause');
+    const mStop = document.getElementById('mStop');
+    const mMute = document.getElementById('mMute');
+    const mFs = document.getElementById('mFs');
+
+    const fileInput = document.getElementById('fileInput');
+    const urlInput = document.getElementById('urlInput');
+    const loadUrlBtn = document.getElementById('loadUrlBtn');
+
+    const scaleInput = document.getElementById('scale');
+    const scaleLabel = document.getElementById('scaleLabel');
+    const fontSizeInput = document.getElementById('fontSize');
+    const fpsCapInput = document.getElementById('fpsCap');
+    const charsetInput = document.getElementById('charset');
+    const charsetPreset = document.getElementById('charsetPreset');
+    const invertInput = document.getElementById('invert');
+    const hqLumaInput = document.getElementById('hqLuma');
+    const hqLumaInput_m = document.getElementById('hqLuma_m');
+    const showNativeInput = document.getElementById('showNative');
+    const usePreInput = document.getElementById('usePre');
+    const colorModeSel = document.getElementById('colorMode');
+    const paletteModeSel = document.getElementById('paletteMode');
+    const ditherSel = document.getElementById('dither');
+    const halfBlockInput = document.getElementById('halfBlock');
+    const blinkInput = document.getElementById('blink');
+    const useWebGLInput = document.getElementById('useWebGL');
+
+    const scaleInput_m = document.getElementById('scale_m');
+    const scaleLabel_m = document.getElementById('scaleLabel_m');
+    const fontSizeInput_m = document.getElementById('fontSize_m');
+    const fpsCapInput_m = document.getElementById('fpsCap_m');
+    const charsetInput_m = document.getElementById('charset_m');
+    const charsetPreset_m = document.getElementById('charsetPreset_m');
+    const invertInput_m = document.getElementById('invert_m');
+    const showNativeInput_m = document.getElementById('showNative_m');
+    const usePreInput_m = document.getElementById('usePre_m');
+    const colorModeSel_m = document.getElementById('colorMode_m');
+    const paletteModeSel_m = document.getElementById('paletteMode_m');
+    const ditherSel_m = document.getElementById('dither_m');
+    const halfBlockInput_m = document.getElementById('halfBlock_m');
+    const blinkInput_m = document.getElementById('blink_m');
+
+    const resOut = document.getElementById('resOut');
+    const infoOut = document.getElementById('infoOut');
+    const rendererOut = document.getElementById('rendererOut');
+    const timingOut = document.getElementById('timingOut');
+    const watchdogOut = document.getElementById('watchdogOut');
+    const status = document.getElementById('status');
+
+    // --- DOS & VGA palettes ---
+    const DOS16 = [
+      [0x00,0x00,0x00], [0xAA,0x00,0x00], [0x00,0xAA,0x00], [0xAA,0x55,0x00],
+      [0x00,0x00,0xAA], [0xAA,0x00,0xAA], [0x00,0xAA,0xAA], [0xAA,0xAA,0xAA],
+      [0x55,0x55,0x55], [0xFF,0x55,0x55], [0x55,0xFF,0x55], [0xFF,0xFF,0x55],
+      [0x55,0x55,0xFF], [0xFF,0x55,0xFF], [0x55,0xFF,0xFF], [0xFF,0xFF,0xFF],
+    ];
+    let ACTIVE16 = DOS16.map(c=>c.slice()); // may be replaced by VGA-auto
+
+    const DOS8_BG = DOS16.slice(0,8);
+    const GRAY4 = [DOS16[0], DOS16[8], DOS16[7], DOS16[15]];
+
+    // --- Char presets ---
+    const PRESETS = {
+      dense: "@$B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/|()1{}[]?-_+~<>i!lI;:,\\\"^`'. ",
+      classic: "@%#*+=-:. ",
+      blocks: "█▓▒░@#W$9876543210?!;:+=-,._ ",
+      numbers: "MNBH@$&80Z5S2I!;:,._ "
+    };
+
+    // Ordered dither matrices (normalized 0..1)
+    const BAYER2 = [0,2,3,1].map(v=> (v+0.5)/4 );
+    const BAYER4 = [
+      0,  8,  2, 10,
+     12,  4, 14,  6,
+      3, 11,  1,  9,
+     15,  7, 13,  5
+    ].map(v=> (v+0.5)/16);
+
+    // --- State ---
+    let cols = 0, rows = 0;
+    let sample = 10, fontSize = 14, fpsCap = 30;
+    let charset = PRESETS.dense, invert = false, usingPre = false, useHQLuma = false;
+    let colorMode = 'fg16', paletteMode = 'dos', dither = 'off', halfBlock = false, blinkOn = false;
+    let fontMetrics = { chW: 8, lineH: 14 };
+    let playing = false, rafId = null, vfcHandle = null, lastFrameTime = 0, lastDrawAt = 0, firstLoad = true, stallCount = 0;
+
+    // LUTs
+    let charIdxLUT = new Uint8Array(256); // 0..255 -> charset index
+    function rebuildCharLUT(){
+      const gl = charset.length - 1;
+      for (let i=0;i<256;i++){
+        charIdxLUT[i] = Math.min(gl, (i*gl/255)|0);
+      }
+    }
+
+    function setStatus(s){ status.textContent = s; }
+    function ms(){ return performance.now(); }
+    const lumFast = (r,g,b)=> ((r*77 + g*150 + b*29) >> 8);
+    const lumHQ = (r,g,b)=> (0.2126*r + 0.7152*g + 0.0722*b);
+    let luminance = lumFast;
+
+    // nearest color using squared distance in RGB (CPU path)
+    function nearestIdx(rgb, palette){
+      let best = 0, bestd = 1e9;
+      for (let i=0;i<palette.length;i++){
+        const p = palette[i];
+        const dr = rgb[0]-p[0], dg = rgb[1]-p[1], db = rgb[2]-p[2];
+        const d = dr*dr + dg*dg + db*db;
+        if (d<bestd){ bestd=d; best=i; }
+      }
+      return best;
+    }
+
+    // === Palettes (16-color families) ===
+    const WIN16 = [
+      [0,0,0],[128,0,0],[0,128,0],[128,128,0],[0,0,128],[128,0,128],[0,128,128],[192,192,192],
+      [128,128,128],[255,0,0],[0,255,0],[255,255,0],[0,0,255],[255,0,255],[0,255,255],[255,255,255]
+    ];
+    const ANSI16 = WIN16.slice();
+    const VGA16  = [
+      [0,0,0],[0,0,170],[0,170,0],[0,170,170],[170,0,0],[170,0,170],[170,85,0],[170,170,170],
+      [85,85,85],[85,85,255],[85,255,85],[85,255,255],[255,85,85],[255,85,255],[255,255,85],[255,255,255]
+    ];
+    const CGA16 = VGA16.slice();
+    const GRAY16 = Array.from({length:16},(_,i)=>{ const v=(i*17)|0; return [v,v,v]; });
+    const XTERM16 = [
+      [0,0,0],[205,0,0],[0,205,0],[205,205,0],[0,0,238],[205,0,205],[0,205,205],[229,229,229],
+      [127,127,127],[255,0,0],[0,255,0],[255,255,0],[92,92,255],[255,0,255],[0,255,255],[255,255,255]
+    ];
+
+    function activatePalette(mode){
+      switch(mode){
+        case 'win16': ACTIVE16 = WIN16.map(c=>c.slice()); break;
+        case 'ansi16': ACTIVE16 = ANSI16.map(c=>c.slice()); break;
+        case 'vga16': ACTIVE16 = VGA16.map(c=>c.slice()); break;
+        case 'cga16': ACTIVE16 = CGA16.map(c=>c.slice()); break;
+        case 'gray16': ACTIVE16 = GRAY16.map(c=>c.slice()); break;
+        case 'xterm16': ACTIVE16 = XTERM16.map(c=>c.slice()); break;
+        case 'dos': default: ACTIVE16 = DOS16.map(c=>c.slice()); break;
+      }
+    }
+
+    // === Fast palette mapping helpers (CPU) ===
+    function wsQuant(v){ return Math.max(0, Math.min(255, Math.round(v/51)*51)); }
+    function mapWebSafeRGB(r,g,b){ return [wsQuant(r), wsQuant(g), wsQuant(b)]; }
+
+    // XTerm 256 palette (CPU) — simplified KD tree omitted here for brevity
+
+    const rgbHex = rgb => "#" + [rgb[0],rgb[1],rgb[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+
+    function mobileMode(){ return document.body.classList.contains('is-mobile'); }
+    function syncMirrors(fromMobile){
+      const pairs = [
+        [scaleInput, scaleInput_m], [fontSizeInput, fontSizeInput_m], [fpsCapInput, fpsCapInput_m],
+        [charsetInput, charsetInput_m], [charsetPreset, charsetPreset_m],
+        [invertInput, invertInput_m], [showNativeInput, showNativeInput_m], [usePreInput, usePreInput_m],
+        [colorModeSel, colorModeSel_m], [paletteModeSel, paletteModeSel_m], [ditherSel, ditherSel_m],
+        [halfBlockInput, halfBlockInput_m], [blinkInput, blinkInput_m], [hqLumaInput, hqLumaInput_m]
+      ];
+      for (const [d,m] of pairs){
+        if (!d || !m) continue;
+        if (fromMobile){ d.value = m.value; if (d.type==='checkbox') d.checked = m.checked; }
+        else { m.value = d.value; if (m.type==='checkbox') m.checked = d.checked; }
+      }
+    }
+
+    function pickCharset(){
+      const useMobile = mobileMode();
+      const presetEl = useMobile ? charsetPreset_m : charsetPreset;
+      const customEl = useMobile ? charsetInput_m : charsetInput;
+      const preset = (presetEl && presetEl.value) || 'dense';
+      if (preset === 'custom'){
+        let v = (customEl && customEl.value) || PRESETS.dense;
+        if (v.length < 2) v = PRESETS.classic + " ";
+        return v;
+      }
+      return PRESETS[preset] || PRESETS.dense;
+    }
+
+    function measureFont(){
+      asciiCtx.font = fontSize + "px ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace";
+      const m = asciiCtx.measureText("M");
+      const chW = Math.max(1, Math.ceil(m.width));
+      const lineH = Math.ceil((m.actualBoundingBoxAscent||fontSize*0.8) + (m.actualBoundingBoxDescent||fontSize*0.2));
+      fontMetrics = { chW, lineH };
+      return fontMetrics;
+    }
+
+    // === Exported so the WebGL wrapper can intercept ===
+    async function restartBackend(){
+      try{ if (window.backendHandle && window.backendHandle.stop) window.backendHandle.stop(); }catch{}
+      if (!window.Backend) return;
+      const W = workCanvas.width|0, H = workCanvas.height|0;
+      window.backendHandle = await Backend.start(video, {cols:W, rows:H}, ({rgba, cols, rows})=>{
+        if (!rgba) return;
+        window._frameRGBA = new Uint8ClampedArray(rgba);
+        window._frameW = cols|0; window._frameH = rows|0;
+      });
+    }
+    window.restartBackend = restartBackend;
+
+    function updateDerived(){
+      const useMobile = mobileMode();
+      if (useMobile) syncMirrors(false);
+
+      const scaleEl = useMobile ? scaleInput_m : scaleInput;
+      const fontEl  = useMobile ? fontSizeInput_m : fontSizeInput;
+      const fpsEl   = useMobile ? fpsCapInput_m : fpsCapInput;
+      const invertEl= useMobile ? invertInput_m : invertInput;
+      const showEl  = useMobile ? showNativeInput_m : showNativeInput;
+      const preEl   = useMobile ? usePreInput_m : usePreInput;
+      const colorEl = useMobile ? colorModeSel_m : colorModeSel;
+      const palEl   = useMobile ? paletteModeSel_m : paletteModeSel;
+      const dithEl  = useMobile ? ditherSel_m : ditherSel;
+      const halfEl  = useMobile ? halfBlockInput_m : halfBlockInput;
+      const blinkEl = useMobile ? blinkInput_m : blinkInput;
+
+      sample = parseInt(scaleEl?.value || 10,10);
+      fontSize = parseInt(fontEl?.value || 14,10);
+      fpsCap = parseInt(fpsEl?.value || 30,10);
+      charset = pickCharset();
+      invert = !!(invertEl?.checked);
+      usingPre = !!(preEl?.checked);
+      colorMode = (colorEl?.value) || 'fg16';
+      if (colorMode==='fullcolor' && usingPre) { usingPre = false; if (preEl) preEl.checked = false; }
+      paletteMode = (palEl?.value) || 'dos';
+      dither = (dithEl?.value) || 'off';
+      halfBlock = !!(halfEl?.checked);
+      blinkOn = !!(blinkEl?.checked);
+      useHQLuma = !!(hqLumaInput?.checked);
+      luminance = useHQLuma ? lumHQ : lumFast;
+
+      if (scaleLabel) scaleLabel.textContent = sample + ' px/char';
+      if (scaleLabel_m) scaleLabel_m.textContent = sample + ' px/char';
+
+      rebuildCharLUT();
+
+      if (video.videoWidth && video.videoHeight){
+        const { chW, lineH } = measureFont();
+        const charAspect = lineH / chW;
+        const vH = halfBlock ? (video.videoHeight/2)|0 : video.videoHeight;
+        cols = Math.max(1, Math.floor(video.videoWidth / sample));
+        rows = Math.max(1, Math.floor(vH / sample * charAspect));
+        workCanvas.width = cols;
+        workCanvas.height = halfBlock ? rows*2 : rows;
+        asciiCanvas.width = chW * cols;
+        asciiCanvas.height = lineH * rows;
+        resOut.textContent = cols + " × " + rows + (halfBlock ? " (half-block x2 vertically)" : "") + " chars";
+        infoOut.textContent = video.videoWidth + "×" + video.videoHeight + " @ " + (video.frameRate || '?') + "fps";
+        rendererOut.textContent = usingPre ? 'DOM <pre>' : (useWebGLInput?.checked ? 'WebGL (ASCII shader)' : 'Canvas text');
+      }
+
+      asciiPre.classList.toggle('hidden', !usingPre);
+      asciiCanvas.classList.toggle('hidden', usingPre);
+      video.classList.toggle('hidden', !(showEl?.checked));
+
+      // If WebGL is requested and not using <pre>, ask the wrapper to take over by calling restartBackend()
+      try { restartBackend(); } catch{}
+    }
+
+    // --- VGA Auto palette (CPU path) left intact for fallbacks ---
+    let km = null;
+
+    function bayerVal(x,y){
+      if (dither==='bayer2'){ return BAYER2[(y&1)*2 + (x&1)]; }
+      if (dither==='bayer4'){ return BAYER4[(y&3)*4 + (x&3)]; }
+      return 0.0;
+    }
+
+    function drawFrame(){
+      if (!video.videoWidth || !video.videoHeight) return;
+      try {
+        workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+      } catch (e){ setStatus('⚠️ Draw blocked (likely CORS). Load a local file instead.'); stopLoops(); return; }
+
+      const img = workCtx.getImageData(0, 0, workCanvas.width, workCanvas.height);
+      const data = img.data;
+
+      // Palette activation for CPU path
+      if (paletteMode!=='vga-auto'){
+        activatePalette(paletteMode);
+      }
+
+      const grad = charset, gl = grad.length - 1, inv = invert;
+      const ctx = asciiCtx;
+      ctx.save();
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, asciiCanvas.width, asciiCanvas.height);
+      ctx.font = fontSize + "px ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace";
+
+      const chW = fontMetrics.chW, lineH = fontMetrics.lineH;
+      if (blinkOn){ /* reserved */ }
+
+      if (usingPre){
+        // DOM <pre> path (monochrome only for speed)
+        let out = new Array(rows);
+        for (let y=0; y<rows; y++){
+          const chars = new Array(cols);
+          for (let x=0; x<cols; x++){
+            let p = ((y* (halfBlock?2:1)) * cols + x) * 4;
+            const r=data[p], g=data[p+1], b=data[p+2];
+            let Y = luminance(r,g,b);
+            const dth = bayerVal(x,y) * 255;
+            Y = Math.max(0, Math.min(255, Y + (dither==='off'?0: (Y<128? -dth : dth) )));
+            let idx = charIdxLUT[Y];
+            if (inv) idx = gl-idx;
+            chars[x] = grad[idx];
+          }
+          out[y] = chars.join('');
+        }
+        asciiPre.textContent = out.join('\\n');
+      } else {
+        // Canvas path (color & mono)
+        if (!halfBlock){
+          for (let y = 0; y < rows; y++){
+            let runColor = null, runStart = 0, runText = [];
+            for (let x = 0; x < cols; x++){
+              const p = (y * cols + x) * 4;
+              const r=data[p], g=data[p+1], b=data[p+2];
+              let Y = luminance(r,g,b);
+              const dth = bayerVal(x,y) * 255;
+              Y = Math.max(0, Math.min(255, Y + (dither==='off'?0: (Y<128? -dth : dth) )));
+              let idx = charIdxLUT[Y];
+              if (inv) idx = gl-idx;
+              const ch = grad[idx];
+
+              let fg = null, bg = null;
+              if (colorMode==='fullcolor'){ fg = [r,g,b]; }
+              else if (colorMode==='gray4'){ fg = GRAY4[ nearestIdx([r,g,b], GRAY4) ]; }
+              else if (colorMode==='fg216'){ fg = mapWebSafeRGB(r,g,b); }
+              else if (colorMode==='xterm256'){ fg = mapWebSafeRGB(r,g,b); } // approx via web-safe for CPU path
+              else { fg = ACTIVE16[ nearestIdx([r,g,b], ACTIVE16) ]; }
+              if (colorMode==='fg16bg8'){ bg = DOS8_BG[ nearestIdx([r,g,b], DOS8_BG) ]; }
+
+              if (bg){
+                ctx.fillStyle = rgbHex(bg);
+                ctx.fillRect(x*chW, y*lineH, chW, lineH);
+              }
+
+              const colHex = colorMode==='off' ? '#fff' : rgbHex(fg||[255,255,255]);
+              if (!runText.length){ runColor = colHex; runStart = x; runText = [ch]; }
+              else if (runColor === colHex){ runText.push(ch); }
+              else {
+                ctx.fillStyle = runColor;
+                ctx.fillText(runText.join(''), runStart*chW, y*lineH);
+                runColor = colHex; runStart = x; runText = [ch];
+              }
+            }
+            if (runText.length){
+              ctx.fillStyle = runColor;
+              ctx.fillText(runText.join(''), runStart*chW, y*lineH);
+            }
+          }
+        } else {
+          // Half-block mode: CPU fallback only
+          const UP = "▀";
+          for (let y = 0; y < rows; y++){
+            let runFG = null, runBG = null, runStart = 0, runText = [];
+            for (let x = 0; x < cols; x++){
+              const pTop = ((y*2) * cols + x) * 4;
+              const pBot = ((y*2+1) * cols + x) * 4;
+              const rt=data[pTop], gt=data[pTop+1], bt=data[pTop+2];
+              const rb=data[pBot], gb=data[pBot+1], bb=data[pBot+2];
+              let topColor, botColor;
+              if (colorMode==='fullcolor'){
+                topColor = [rt,gt,bt]; botColor = [rb,gb,bb];
+              } else {
+                topColor = ACTIVE16[ nearestIdx([rt,gt,bt], ACTIVE16) ];
+                botColor = ACTIVE16[ nearestIdx([rb,gb,bb], ACTIVE16) ];
+              }
+              const same = (topColor[0]===botColor[0] && topColor[1]===botColor[1] && topColor[2]===botColor[2]);
+              const ch = same ? "█" : UP;
+
+              const dth = bayerVal(x,y);
+              const dist = Math.abs(luminance(rt,gt,bt) - luminance(rb,gb,bb));
+              const charOut = (dist < 12 && dth > 0.6) ? " " : ch;
+
+              const fgHex = rgbHex(topColor);
+              const bgHex = rgbHex(botColor);
+              const sameRun = (runFG===fgHex && runBG===bgHex);
+              if (!runText.length){ runFG = fgHex; runBG = bgHex; runStart = x; runText = [charOut]; }
+              else if (sameRun){ runText.push(charOut); }
+              else {
+                if (runBG){
+                  asciiCtx.fillStyle = runBG;
+                  asciiCtx.fillRect(runStart*chW, y*lineH, (x-runStart)*chW, lineH);
+                }
+                asciiCtx.fillStyle = runFG;
+                asciiCtx.fillText(runText.join(''), runStart*chW, y*lineH);
+                runFG = fgHex; runBG = bgHex; runStart = x; runText = [charOut];
+              }
+            }
+            if (runText.length){
+              if (runBG){
+                asciiCtx.fillStyle = runBG;
+                asciiCtx.fillRect(runStart*chW, y*lineH, (cols-runStart)*chW, lineH);
+              }
+              asciiCtx.fillStyle = runFG;
+              asciiCtx.fillText(runText.join(''), runStart*chW, y*lineH);
+            }
+          }
+        }
+      }
+
+      asciiCtx.restore();
+      lastDrawAt = ms();
+    }
+
+    function stopLoops(){
+      try{ if (window.backendHandle && window.backendHandle.stop) window.backendHandle.stop(); }catch{}
+      playing = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      if (vfcHandle) { try { video.cancelVideoFrameCallback(vfcHandle); } catch{} vfcHandle = null; }
+    }
+
+    function loopRAF(){
+      if (!playing) return;
+      const now = ms();
+      const minDelta = 1000 / Math.max(1, fpsCap);
+      if (now - lastFrameTime >= minDelta){
+        drawFrame();
+        lastFrameTime = now;
+        timingOut.textContent = 'rAF';
+      }
+      rafId = requestAnimationFrame(loopRAF);
+    }
+    function loopVFC(){
+      if (!playing) return;
+      drawFrame();
+      timingOut.textContent = 'video.requestVideoFrameCallback';
+      vfcHandle = video.requestVideoFrameCallback(loopVFC);
+    }
+    function startLoops(){
+      try{ restartBackend(); }catch{}
+      stopLoops();
+      playing = true;
+      lastFrameTime = 0;
+      lastDrawAt = ms();
+      if (typeof video.requestVideoFrameCallback === 'function'){ vfcHandle = video.requestVideoFrameCallback(loopVFC); }
+      else { rafId = requestAnimationFrame(loopRAF); }
+    }
+
+    const WATCHDOG_INTERVAL_MS = 2000, FREEZE_THRESHOLD_MS = 2500;
+    setInterval(() => {
+      if (!playing) return;
+      const now = ms();
+      if (now - lastDrawAt > FREEZE_THRESHOLD_MS){
+        stallCount++;
+        watchdogOut.textContent = 'Recoveries: ' + stallCount;
+        setStatus('Recovering from stall…');
+        try {
+          if (video.readyState < 2) {
+            const src = video.currentSrc || video.src; const t = video.currentTime;
+            video.load(); video.src = src; video.currentTime = t;
+          }
+          startLoops();
+          if (video.paused) { video.play().catch(()=>{}); }
+        } catch(e){}
+        lastDrawAt = now;
+      }
+    }, WATCHDOG_INTERVAL_MS);
+    ['stalled','suspend','waiting','emptied','error'].forEach(ev => {
+      video.addEventListener(ev, () => { setStatus('Video ' + ev + '…'); startLoops(); });
+    });
+
+    // UI wiring
+    const inputs = [scaleInput,fontSizeInput,fpsCapInput,charsetInput,charsetPreset,invertInput,hqLumaInput,showNativeInput,usePreInput,colorModeSel,paletteModeSel,ditherSel,halfBlockInput,blinkInput,useWebGLInput];
+    inputs.forEach(el => {
+      if (!el) return;
+      const evt = (el.tagName==='SELECT') ? 'change' : 'input';
+      el.addEventListener(evt, () => { syncMirrors(false); updateDerived(); });
+    });
+    const minputs = [scaleInput_m,fontSizeInput_m,fpsCapInput_m,charsetInput_m,charsetPreset_m,invertInput_m,showNativeInput_m,usePreInput_m,colorModeSel_m,paletteModeSel_m,ditherSel_m,halfBlockInput_m,blinkInput_m];
+    minputs.forEach(el => {
+      if (!el) return;
+      const evt = (el.tagName==='SELECT') ? 'change' : 'input';
+      el.addEventListener(evt, () => { syncMirrors(true); updateDerived(); });
+    });
+    if (scaleInput) scaleInput.addEventListener('input', () => { if (scaleLabel) scaleLabel.textContent = scaleInput.value + ' px/char'; });
+    if (scaleInput_m) scaleInput_m.addEventListener('input', () => { if (scaleLabel_m) scaleLabel_m.textContent = scaleInput_m.value + ' px/char'; });
+    if (charsetPreset) charsetPreset.addEventListener('change', () => { if (charsetPreset.value!=='custom') charsetInput.value = PRESETS[charsetPreset.value]; updateDerived(); });
+    if (charsetPreset_m) charsetPreset_m.addEventListener('change', () => { if (charsetPreset_m.value!=='custom') charsetInput_m.value = PRESETS[charsetPreset_m.value]; syncMirrors(true); updateDerived(); });
+
+    if (playBtn) playBtn.addEventListener('click', async () => { try { await video.play(); startLoops(); setStatus('Playing'); } catch {} });
+    if (pauseBtn) pauseBtn.addEventListener('click', () => { video.pause(); stopLoops(); setStatus('Paused'); });
+    if (stopBtn) stopBtn.addEventListener('click', () => { video.pause(); video.currentTime=0; stopLoops(); setStatus('Stopped'); });
+    if (muteBtn) muteBtn.addEventListener('click', () => {
+      video.muted = !video.muted;
+      if (muteBtn) muteBtn.textContent = video.muted ? 'Unmute' : 'Mute';
+      if (mMute) mMute.textContent = video.muted ? 'Unmute' : 'Mute';
+    });
+    if (fsBtn) fsBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement){ (stage.requestFullscreen && stage.requestFullscreen()); }
+      else { (document.exitFullscreen && document.exitFullscreen()); }
+    });
+
+    if (mPlay) mPlay.addEventListener('click', async () => { try { await video.play(); startLoops(); setStatus('Playing'); } catch{} });
+    if (mPause) mPause.addEventListener('click', () => { video.pause(); stopLoops(); setStatus('Paused'); });
+    if (mStop) mStop.addEventListener('click', () => { video.pause(); video.currentTime=0; stopLoops(); setStatus('Stopped'); });
+    if (mMute) mMute.addEventListener('click', () => { video.muted = !video.muted; mMute.textContent = video.muted ? 'Unmute' : 'Mute'; if (muteBtn) muteBtn.textContent = mMute.textContent; });
+    if (mFs) mFs.addEventListener('click', () => {
+      if (!document.fullscreenElement){ (stage.requestFullscreen && stage.requestFullscreen()); }
+      else { (document.exitFullscreen && document.exitFullscreen()); }
+    });
+
+    fileInput.addEventListener('change', (e) => { const f=e.target.files?.[0]; if (f){ const url=URL.createObjectURL(f); video.src=url; video.dataset.objecturl=url; video.load(); setStatus('Loaded local file: '+f.name); } });
+    function revokeObjectURLIfAny(){ if (video.dataset.objecturl){ try{URL.revokeObjectURL(video.dataset.objecturl);}catch{} delete video.dataset.objecturl; } }
+    function loadUrl(url){ revokeObjectURLIfAny(); video.crossOrigin='anonymous'; video.src=url.trim(); video.load(); setStatus('Loaded URL (may require CORS): '+url); }
+    loadUrlBtn.addEventListener('click', () => { const url=urlInput.value.trim(); if (url) loadUrl(url); });
+
+    video.addEventListener('loadedmetadata', () => {
+      if (firstLoad && mobileMode()){
+        scaleInput_m.value = '12'; fontSizeInput_m.value='12'; fpsCapInput_m.value='30';
+        charsetPreset_m.value='dense'; charsetInput_m.value=PRESETS.dense; colorModeSel_m.value='fg16';
+        paletteModeSel_m.value = 'dos'; ditherSel_m.value='off'; halfBlockInput_m.checked=false;
+        syncMirrors(true);
+        firstLoad = false;
+      }
+      updateDerived();
+    });
+    video.addEventListener('resize', updateDerived);
+    window.addEventListener('resize', updateDerived);
+
+    video.addEventListener('pause', () => { stopLoops(); setStatus('Paused'); });
+    video.addEventListener('ended', () => { stopLoops(); setStatus('Ended'); });
+
+    stage.addEventListener('click', () => {
+      if (!mobileMode()) return;
+      if (video.paused){ video.play().then(()=>{ startLoops(); setStatus('Playing'); }).catch(()=>{}); }
+      else { video.pause(); stopLoops(); setStatus('Paused'); }
+    });
+
+    document.addEventListener('visibilitychange', () => { if (document.hidden){ stopLoops(); } else if (!video.paused){ startLoops(); } });
+
+    // Init
+    charsetInput.value = PRESETS.dense;
+    if (charsetInput_m) charsetInput_m.value = PRESETS.dense;
+    updateDerived();
+  })();
+  </script>
+
+  <!-- === Video backend upgrade (rVFC/Worker + WebCodecs/MSTP fast path) — unchanged functional baseline === -->
+  <script>
+  (function(){
+    const Has = {
+      secure: self.isSecureContext === true,
+      webcodecs: ('VideoFrame' in self) && ('MediaStreamTrackProcessor' in self),
+      rvfc: 'requestVideoFrameCallback' in HTMLVideoElement.prototype,
+      worker: !!window.Worker,
+      offscreen: typeof OffscreenCanvas !== 'undefined'
+    };
+
+    // Usage: Backend.start(video, {cols, rows}, onResult) -> handle.stop()
+    window.Backend = {
+      async start(video, dims, onResult){
+        const cols = dims.cols|0, rows = dims.rows|0;
+        if (Has.secure && Has.webcodecs && Has.worker && Has.offscreen) {
+          return startWebCodecsWorker(video, cols, rows, onResult);
+        }
+        if (Has.rvfc && Has.worker && Has.offscreen){
+          return startRvfcWorker(video, cols, rows, onResult);
+        }
+        return startMainThread(video, cols, rows, onResult);
+      }
+    };
+
+    function startWebCodecsWorker(video, cols, rows, onResult){
+      const blob = new Blob([workerCode(cols, rows, /*useTP=*/true)], {type:'application/javascript'});
+      const w = new Worker(URL.createObjectURL(blob));
+      w.onmessage = (e)=>{ if (e.data && e.data.type==='result') onResult(e.data); };
+      const stream = video.captureStream?.() || video.mozCaptureStream?.();
+      if (!stream){ console.warn('captureStream not supported; falling back.'); return startRvfcWorker(video, cols, rows, onResult); }
+      const track = stream.getVideoTracks()[0];
+      try { w.postMessage({type:'track', track}, [track]); } catch (err) {
+        console.warn('Failed to transfer track, falling back:', err);
+        return startRvfcWorker(video, cols, rows, onResult);
+      }
+      return { stop(){ w.terminate(); } };
+    }
+
+    function startRvfcWorker(video, cols, rows, onResult){
+      const blob = new Blob([workerCode(cols, rows, /*useTP=*/false)], {type:'application/javascript'});
+      const w = new Worker(URL.createObjectURL(blob));
+      w.onmessage = (e)=>{ if (e.data && e.data.type==='result') onResult(e.data); };
+      let running = true, vfc = null;
+      const pump = async ()=>{
+        if (!running) return;
+        try {
+          const bmp = await createImageBitmap(video, {resizeWidth: cols, resizeHeight: rows, resizeQuality:'high'});
+          w.postMessage({type:'bitmap', bitmap:bmp}, [bmp]);
+        } catch {
+          const c = document.createElement('canvas'); c.width=cols; c.height=rows;
+          const cx = c.getContext('2d', {willReadFrequently:true});
+          try { cx.drawImage(video, 0,0, cols, rows); } catch {}
+          try { const bmp = await createImageBitmap(c); w.postMessage({type:'bitmap', bitmap:bmp}, [bmp]); } catch {}
+        }
+        vfc = video.requestVideoFrameCallback ? video.requestVideoFrameCallback(()=>pump()) : requestAnimationFrame(()=>pump());
+      };
+      pump();
+      return { stop(){ running=false; try{ video.cancelVideoFrameCallback?.(vfc) }catch{}; w.terminate(); } };
+    }
+
+    function startMainThread(video, cols, rows, onResult){
+      let running = true;
+      const c = document.createElement('canvas'); c.width=cols; c.height=rows;
+      const cx = c.getContext('2d', {willReadFrequently:true});
+      (function tick(){
+        if (!running) return;
+        try { cx.drawImage(video, 0,0, cols, rows); } catch {}
+        const img = cx.getImageData(0,0, cols, rows);
+        onResult({type:'result', cols, rows, rgba: img.data}, [img.data.buffer]);
+        requestAnimationFrame(tick);
+      })();
+      return { stop(){ running=false; } };
+    }
+
+    // Worker code string with advanced WebCodecs path
+    function workerCode(cols, rows, useTP){
+      return `
+        let cols=${cols}|0, rows=${rows}|0;
+        let off = (typeof OffscreenCanvas!=='undefined') ? new OffscreenCanvas(cols, rows) : null;
+        let ctx = off ? off.getContext('2d', {willReadFrequently:true}) : null;
+        function sendRGBA(){
+          if (!ctx) return;
+          const img = ctx.getImageData(0,0, cols, rows);
+          postMessage({type:'result', cols, rows, rgba: img.data}, [img.data.buffer]);
+        }
+        onmessage = async (e)=>{
+          const t = e.data && e.data.type;
+          if (t==='bitmap'){ if (ctx){ ctx.drawImage(e.data.bitmap,0,0); try{ e.data.bitmap.close&&e.data.bitmap.close(); }catch{}; sendRGBA(); } return; }
+          if (t==='track' && ${useTP?'true':'false'}){
+            const track = e.data.track;
+            try {
+              const proc = new MediaStreamTrackProcessor({track});
+              const reader = proc.readable.getReader();
+              while(true){
+                const {value:frame, done} = await reader.read();
+                if (done || !frame) break;
+                if (!ctx){ frame.close(); continue; }
+                let drawn=false;
+                try { ctx.drawImage(frame, 0,0, cols, rows); drawn=true; } catch{}
+                if (!drawn){
+                  try{
+                    const bmp = await createImageBitmap(frame, {resizeWidth: cols, resizeHeight: rows, resizeQuality:'high'});
+                    ctx.drawImage(bmp, 0,0);
+                    try{ bmp.close&&bmp.close(); }catch{}
+                    drawn=true;
+                  }catch{}
+                }
+                if (!drawn && frame.copyTo){
+                  try{
+                    const sw = frame.codedWidth||frame.displayWidth||frame.visibleRect?.width||cols;
+                    const sh = frame.codedHeight||frame.displayHeight||frame.visibleRect?.height||rows;
+                    const buf = new ArrayBuffer(sw*sh*4);
+                    const src = new Uint8ClampedArray(buf);
+                    await frame.copyTo(src, {format:'RGBA'});
+                    const img = ctx.createImageData(cols, rows); const dst = img.data;
+                    for (let y=0;y<rows;y++){
+                      const sy = Math.min(sh-1, Math.floor(y*sh/rows));
+                      for (let x=0;x<cols;x++){
+                        const sx = Math.min(sw-1, Math.floor(x*sw/cols));
+                        const si = (sy*sw + sx)*4; const di = (y*cols + x)*4;
+                        dst[di]=src[si]; dst[di+1]=src[si+1]; dst[di+2]=src[si+2]; dst[di+3]=255;
+                      }
+                    }
+                    ctx.putImageData(img,0,0); drawn=true;
+                  }catch{}
+                }
+                frame.close();
+                if (drawn) sendRGBA();
+              }
+            } catch (err){ postMessage({type:'error', reason: String(err&&err.message||err)}); }
+          }
+        };`;
+    }
+  })();
+  </script>
+
+  <!-- === WebGL ASCII Renderer (toggle) — fixed & upgraded === -->
+  <script>
+  (function(){
+    class GLAsciiRenderer {
+      constructor({canvas, video, onError, onInfo}) {
+        this.canvas = canvas; this.video = video;
+        this.onError = onError || (()=>{}); this.onInfo = onInfo || (()=>{});
+        this.opts = {
+          cols:160, rows:90, colorMode:'truecolor', paletteMode:'none', dither:'off', halfBlock:false,
+          charset:"@$B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\\\|()1{}[]?-_+~<>i!lI;:,\\\"^`'. ",
+          fontFamily:"Courier New, monospace",
+          glyphPx:{w:8,h:16},
+          dos16:[[0,0,0],[170,0,0],[0,170,0],[170,85,0],[0,0,170],[170,0,170],[0,170,170],[170,170,170],[85,85,85],[255,85,85],[85,255,85],[255,255,85],[85,85,255],[255,85,255],[85,255,255],[255,255,255]]
+        };
+        this.active=false; this._raf=null; this._vfc=null;
+        this._videoTexReady=false;
+      }
+      async init(){
+        const c=this.canvas;
+        const gl = c && c.getContext && (c.getContext('webgl2',{alpha:false,antialias:false,preserveDrawingBuffer:false}) || c.getContext('webgl',{alpha:false,antialias:false,preserveDrawingBuffer:false}));
+        if(!gl){ this.onError('WebGL not available'); return false; }
+        this.gl=gl; this._buildAtlas(); this._buildGL(); this.active=true; return true;
+      }
+      setOptions(o={}){
+        Object.assign(this.opts,o);
+        if (o.charset || o.fontFamily || o.glyphPx){ this._buildAtlas(); this._createOrUpdateAtlasTexture(); }
+        if (o.cols || o.rows) this._resizeCanvasToGrid();
+        if (typeof o.halfBlock==='boolean') this._useHalf=!!this.opts.halfBlock;
+        if (o.dos16) this._uploadDOS16();
+      }
+      start(){ if(!this.active) return; this._resizeCanvasToGrid();
+        const v=this.video;
+        const tick=()=>{ if(!this.active) return;
+          try{ this._renderFrame(); }catch(e){ this.onError(e.message); this.stop(); return; }
+          if (v && v.requestVideoFrameCallback){ this._vfc = v.requestVideoFrameCallback(()=>tick()); }
+          else { this._raf = requestAnimationFrame(()=>tick()); }
+        };
+        if (v && v.requestVideoFrameCallback){ this._vfc = v.requestVideoFrameCallback(()=>tick()); }
+        else { this._raf = requestAnimationFrame(()=>tick()); }
+      }
+      stop(){ this.active=false; try{ this.video && this.video.cancelVideoFrameCallback && this.video.cancelVideoFrameCallback(this._vfc);}catch{} cancelAnimationFrame(this._raf); }
+      _resizeCanvasToGrid(){ const {cols,rows,glyphPx}=this.opts; this.canvas.width=cols*glyphPx.w; this.canvas.height=rows*glyphPx.h; this.gl.viewport(0,0,this.canvas.width,this.canvas.height); }
+      _buildAtlas(){
+        const {charset,glyphPx,fontFamily}=this.opts;
+        // Ensure first 4 glyphs are [space, '▀', '▄', '█'] for half-block program, then add unique rest (dark->light order expected)
+        const base = [' ','▀','▄','█'];
+        const seen = new Set(base);
+        for (const ch of charset){ if (!seen.has(ch)) base.push(ch), seen.add(ch); }
+        this._glyphList = base.join('');
+        const cols=Math.ceil(Math.sqrt(base.length)), rows=Math.ceil(base.length/cols);
+        const W=cols*glyphPx.w, H=rows*glyphPx.h;
+        const cvs=document.createElement('canvas'); cvs.width=W; cvs.height=H;
+        const ctx=cvs.getContext('2d');
+        // Transparent background so glyph alpha is usable in shader
+        ctx.clearRect(0,0,W,H);
+        ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font=`${glyphPx.h}px ${fontFamily}`;
+        for(let i=0;i<base.length;i++){
+          const ch=base[i];
+          const x=(i%cols)*glyphPx.w + Math.floor(glyphPx.w/2);
+          const y=Math.floor(i/cols)*glyphPx.h + Math.floor(glyphPx.h/2);
+          ctx.fillText(ch,x,y);
+        }
+        this._atlas={canvas:cvs, grid:{cols,rows}, cell:glyphPx, count:base.length};
+      }
+      _createOrUpdateAtlasTexture(){
+        const gl=this.gl, {canvas}=this._atlas;
+        if(!this._atlasTex) this._atlasTex=gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D,this._atlasTex);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+        // Use NEAREST for crisp glyph edges
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,canvas);
+        gl.bindTexture(gl.TEXTURE_2D,null);
+      }
+      _buildGL(){
+        const gl=this.gl;
+        const vs='attribute vec2 a_pos; varying vec2 v_uv; void main(){ v_uv=(a_pos+1.0)*0.5; gl_Position=vec4(a_pos,0.0,1.0);}';
+        const fs_common=`precision mediump float; varying vec2 v_uv; uniform sampler2D uVideo,uAtlas;
+          uniform vec2 uCanvasPx,uCellPx,uGrid,uAtlasGrid; uniform float uCharsetCount;
+          uniform int uColorMode,uDither,uPaletteMode; // colorMode: 0 mono, 1 truecolor; paletteMode: 0 none,1 dos16,2 gray4,3 websafe216,4 xterm256
+          uniform vec3 uDOS16[16];
+          float luma(vec3 c){ return dot(c, vec3(0.2126,0.7152,0.0722)); }
+          float bayer2(vec2 p){ int x=int(mod(p.x,2.0)); int y=int(mod(p.y,2.0)); int t=(y==0)?(x==0?0:2):(x==0?3:1); return float(t)/4.0; }
+          float bayer4(vec2 p){ int x=int(mod(p.x,4.0)); int y=int(mod(p.y,4.0)); int m[16]; m[0]=0;m[1]=8;m[2]=2;m[3]=10;m[4]=12;m[5]=4;m[6]=14;m[7]=6;m[8]=3;m[9]=11;m[10]=1;m[11]=9;m[12]=15;m[13]=7;m[14]=13;m[15]=5; return float(m[y*4+x])/16.0; }
+          float ditherAdjust(vec2 cell){ if(uDither==1) return (bayer2(cell)-0.375)*0.15; if(uDither==2) return (bayer4(cell)-0.46875)*0.15; return 0.0; }
+          vec2 atlasUV(float index, vec2 withinCell){ float cols=uAtlasGrid.x; float rows=uAtlasGrid.y; float col=mod(index,cols); float row=floor(index/cols); vec2 base=vec2(col/cols,row/rows); vec2 step=vec2(1.0/cols,1.0/rows); return base+withinCell*step; }
+          // Palette helpers
+          float sd2(vec3 a, vec3 b){ vec3 d=a-b; return dot(d,d); }
+          vec3 nearestDOS16(vec3 c){ float best=1e9; vec3 outc=c; for(int i=0;i<16;i++){ float d=sd2(c, uDOS16[i]/255.0); if(d<best){best=d; outc=uDOS16[i]/255.0;} } return outc; }
+          // Round to 6 websafe steps (0,51,..255)
+          float ws(float v){ return floor(v*255.0/51.0+0.5)*51.0/255.0; }
+          vec3 qWebSafe(vec3 c){ return vec3(ws(c.r), ws(c.g), ws(c.b)); }
+          // Approx XTerm 6x6x6 cube (0,95,135,175,215,255), grayscale ramp ignored for speed
+          float q6(float v){ float s[6]; s[0]=0.0; s[1]=95.0/255.0; s[2]=135.0/255.0; s[3]=175.0/255.0; s[4]=215.0/255.0; s[5]=1.0; float best=s[0]; float bd=abs(v-s[0]); for(int i=1;i<6;i++){ float d=abs(v-s[i]); if(d<bd){bd=d; best=s[i];} } return best; }
+          vec3 qXterm(vec3 c){ return vec3(q6(c.r), q6(c.g), q6(c.b)); }
+          vec3 applyPalette(vec3 c, vec2 cell){
+            // small ordered-dithered bias to reduce banding in quantization
+            float bias = (uDither==0)? 0.0 : ( (uDither==1? (bayer2(cell)-0.5) : (bayer4(cell)-0.5)) * 0.06 );
+            vec3 cc = clamp(c + bias, 0.0, 1.0);
+            if(uPaletteMode==1) return nearestDOS16(cc);
+            if(uPaletteMode==2){ float y = luma(cc); float t = (y<0.33? 0.1 : (y<0.66? 0.5 : 0.9)); return vec3(t); }
+            if(uPaletteMode==3) return qWebSafe(cc);
+            if(uPaletteMode==4) return qXterm(cc);
+            return cc; // none
+          }
+        `;
+        const fs_main=fs_common+`
+          void main(){
+            vec2 fragPx=v_uv*uCanvasPx;
+            vec2 cell=floor(fragPx/uCellPx);
+            vec2 inCell=mod(fragPx,uCellPx)/uCellPx;
+            vec2 videoUV=(cell+0.5)/uGrid;
+            vec3 src=texture2D(uVideo,videoUV).rgb;
+            float lum=luma(src)+ditherAdjust(cell);
+            float idx=clamp(floor(lum*(uCharsetCount-1.0)+0.5),0.0,uCharsetCount-1.0);
+            vec2 uvA=atlasUV(idx,inCell);
+            vec4 g=texture2D(uAtlas,uvA);
+            // tint glyph by chosen color
+            vec3 col = (uColorMode==1)? src : vec3(lum);
+            col = applyPalette(col, cell);
+            // compensate a little for glyph coverage (prevents overall darkening)
+            float boost = 1.15;
+            gl_FragColor=vec4(clamp(col*boost,0.0,1.0), g.a) * g.a;
+          }`;
+        const fs_half=fs_common+`
+          void main(){
+            vec2 fragPx=v_uv*uCanvasPx;
+            vec2 cell=floor(fragPx/uCellPx);
+            vec2 inCell=mod(fragPx,uCellPx)/uCellPx;
+            vec2 uvT=(cell+vec2(0.5,0.25))/uGrid;
+            vec2 uvB=(cell+vec2(0.5,0.75))/uGrid;
+            vec3 top=texture2D(uVideo,uvT).rgb;
+            vec3 bot=texture2D(uVideo,uvB).rgb;
+            float lt=luma(top)+ditherAdjust(cell*vec2(1.0,2.0));
+            float lb=luma(bot)+ditherAdjust(cell*vec2(1.0,2.0)+vec2(0.0,1.0));
+            float t=0.5;
+            float pick=(lt>=t && lb>=t)?3.0:(lt>=t && lb<t)?1.0:(lt<t && lb>=t)?2.0:0.0; // [space,▀,▄,█]
+            vec2 uvA=atlasUV(pick,inCell);
+            vec4 g=texture2D(uAtlas,uvA);
+            vec3 fg=(uColorMode==1)?(inCell.y<0.5?top:bot):vec3((lt+lb)*0.5);
+            fg = applyPalette(fg, cell);
+            float boost = 1.15;
+            gl_FragColor=vec4(clamp(fg*boost,0.0,1.0), g.a) * g.a;
+          }`;
+        const progMain=this._mk(vs,fs_main), progHalf=this._mk(vs,fs_half); this._progMain=progMain; this._progHalf=progHalf;
+        const quad=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1, -1,1,1,-1,1,1]),gl.STATIC_DRAW);
+        this._quad=quad;
+        const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+        this._videoTex=tex; gl.bindTexture(gl.TEXTURE_2D,null);
+        this._createOrUpdateAtlasTexture(); this._useHalf=!!this.opts.halfBlock;
+        this._uploadDOS16();
+      }
+      _uploadDOS16(){
+        const gl=this.gl; const loc = gl.getUniformLocation(this._progMain,'uDOS16[0]'); if(!loc) return;
+        const flat=[]; for(const c of this.opts.dos16){ flat.push(c[0],c[1],c[2]); }
+        gl.useProgram(this._progMain); gl.uniform3fv(gl.getUniformLocation(this._progMain,'uDOS16[0]'), new Float32Array(flat));
+        gl.useProgram(this._progHalf); gl.uniform3fv(gl.getUniformLocation(this._progHalf,'uDOS16[0]'), new Float32Array(flat));
+      }
+      _mk(vsSrc,fsSrc){
+        const gl=this.gl;
+        const vs=gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs,vsSrc); gl.compileShader(vs);
+        if(!gl.getShaderParameter(vs,gl.COMPILE_STATUS)) throw new Error('VS: '+gl.getShaderInfoLog(vs));
+        const fs=gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs,fsSrc); gl.compileShader(fs);
+        if(!gl.getShaderParameter(fs,gl.COMPILE_STATUS)) throw new Error('FS: '+gl.getShaderInfoLog(fs));
+        const p=gl.createProgram(); gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p);
+        if(!gl.getProgramParameter(p,gl.LINK_STATUS)){ throw new Error('GL link error: '+gl.getProgramInfoLog(p)); } return p;
+      }
+      _renderFrame(){
+        const gl=this.gl, v=this.video; if(!v || v.readyState<2) return;
+        gl.bindTexture(gl.TEXTURE_2D,this._videoTex);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+        if(!this._videoTexReady){
+          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,v);
+          this._videoTexReady=true;
+        } else {
+          gl.texSubImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.UNSIGNED_BYTE,v);
+        }
+        gl.bindTexture(gl.TEXTURE_2D,null);
+
+        const prog=this._useHalf?this._progHalf:this._progMain; gl.useProgram(prog);
+        const loc=gl.getAttribLocation(prog,'a_pos'); gl.bindBuffer(gl.ARRAY_BUFFER,this._quad);
+        gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+        const U=(n)=>gl.getUniformLocation(prog,n);
+        const U2=(n,x,y)=>gl.uniform2f(U(n),x,y), U1f=(n,x)=>gl.uniform1f(U(n),x), U1i=(n,x)=>gl.uniform1i(U(n),x);
+
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,this._videoTex); gl.uniform1i(U('uVideo'),0);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,this._atlasTex); gl.uniform1i(U('uAtlas'),1);
+
+        const {cols,rows,glyphPx,dither,colorMode,paletteMode}=this.opts;
+        U2('uCanvasPx',this.canvas.width,this.canvas.height);
+        U2('uCellPx',glyphPx.w,glyphPx.h);
+        U2('uGrid',cols,rows);
+        U2('uAtlasGrid',this._atlas.grid.cols,this._atlas.grid.rows);
+        U1f('uCharsetCount',this._atlas.count);
+        U1i('uColorMode',colorMode==='truecolor'?1:0);
+        U1i('uDither',dither==='bayer2'?1:(dither==='bayer4'?2:0));
+        const pm = paletteMode==='none'?0 : (paletteMode==='dos16'?1 : (paletteMode==='gray4'?2 : (paletteMode==='websafe216'?3 : (paletteMode==='xterm256'?4:0))));
+        U1i('uPaletteMode', pm);
+
+        gl.drawArrays(gl.TRIANGLES,0,6);
+      }
+    }
+
+    // Hook restartBackend() so the WebGL renderer can take over when toggle is on
+    function hookRestart(){
+      if (window.__wrappedRestartBackend) return;
+      if (typeof window.restartBackend !== 'function'){ setTimeout(hookRestart, 50); return; }
+      const orig = window.restartBackend;
+      window.__wrappedRestartBackend = true;
+      window.restartBackend = async function(){
+        try{
+          const useWebGL = !!(document.getElementById('useWebGL') && document.getElementById('useWebGL').checked);
+          const usingPre = !!((document.getElementById('usePre')||{}).checked || (document.getElementById('usePre_m')||{}).checked);
+          if (!useWebGL || usingPre) return orig.apply(this, arguments);
+
+          const video = document.getElementById('video') || document.querySelector('video');
+          const canvas = document.getElementById('ascii'); // correct id
+          if (!video || !canvas) return orig.apply(this, arguments);
+
+          // Pull computed grid from workCanvas if available
+          const W = (window.workCanvas && window.workCanvas.width)  ? window.workCanvas.width  : Math.floor(canvas.width/8);
+          const H = (window.workCanvas && window.workCanvas.height) ? window.workCanvas.height : Math.floor(canvas.height/16);
+
+          function val(id){ var el=document.getElementById(id); return el?el.value:null; }
+          function chk(id){ var el=document.getElementById(id); return !!(el && el.checked); }
+          const uiColorMode = (val('colorMode') || val('colorMode_m') || 'fg16');
+          const ditherVal = (val('dither') || val('dither_m') || 'off');
+          const halfBlock = chk('halfBlock') || chk('halfBlock_m');
+          const palSel = (val('paletteMode') || val('paletteMode_m') || 'dos');
+
+          // Map UI modes to shader palette modes
+          let paletteMode = 'none';
+          if (uiColorMode==='fg16' || uiColorMode==='fg16bg8') paletteMode = 'dos16';
+          else if (uiColorMode==='gray4') paletteMode = 'gray4';
+          else if (uiColorMode==='fg216') paletteMode = 'websafe216';
+          else if (uiColorMode==='xterm256') paletteMode = 'xterm256';
+
+          const glr = new GLAsciiRenderer({ canvas, video,
+            onError:(m)=>console.warn('[GLASCII]',m), onInfo:(m)=>console.log('[GLASCII]',m) });
+          const ok = await glr.init();
+          if (!ok) return orig.apply(this, arguments);
+
+          glr.setOptions({
+            cols: W, rows: H,
+            colorMode: (uiColorMode==='fullcolor')?'truecolor':'mono',
+            paletteMode,
+            dither: ditherVal==='bayer2'?'bayer2':(ditherVal==='bayer4'?'bayer4':'off'),
+            // Support half-block in GL via dedicated program now that atlas reserves first 4 glyphs
+            halfBlock: !!halfBlock
+          });
+          glr.start();
+          window._glAscii = glr;
+          try{ if (window.backendHandle && window.backendHandle.stop) window.backendHandle.stop(); }catch{}
+          window.backendHandle = { stop(){ try{ window._glAscii && window._glAscii.stop(); }catch{} } };
+          var ro=document.getElementById('rendererOut'); if (ro) ro.textContent='WebGL (ASCII shader)';
+          return;
+        }catch(e){
+          console.warn('WebGL toggle path failed, falling back:', e);
+          return orig.apply(this, arguments);
+        }
+      };
+    }
+    if (document.readyState === 'complete' || document.readyState === 'interactive') hookRestart();
+    else document.addEventListener('DOMContentLoaded', hookRestart);
+  })();
+  </script>
+
+</body>
+</html>
